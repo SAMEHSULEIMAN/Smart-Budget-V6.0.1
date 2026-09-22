@@ -1,0 +1,449 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>الميزانية الذكية PRO</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
+</head>
+<body>
+
+<!-- ============ القائمة الجانبية ============ -->
+<aside id="sidebar" class="sidebar">
+  <div class="sidebar-brand">
+    <div class="brand-icon">💰</div>
+    <div class="brand-text">
+      <h3>الميزانية الذكية</h3>
+      <span class="brand-badge">PRO</span>
+    </div>
+    <button id="sidebarClose" class="sidebar-close" aria-label="إغلاق">×</button>
+  </div>
+
+  <nav class="sidebar-nav">
+    <div class="nav-group-title">الرئيسية</div>
+    <a class="nav-item active" data-page="dashboard">
+      <span class="nav-icon">🏠</span>
+      <span>لوحة التحكم</span>
+    </a>
+
+    <div class="nav-group-title">الإدارة المالية</div>
+    <a class="nav-item" data-page="income">
+      <span class="nav-icon">💵</span>
+      <span>الدخل والمصادر</span>
+    </a>
+    <a class="nav-item" data-page="categories">
+      <span class="nav-icon">📂</span>
+      <span>الفئات والميزانيات</span>
+    </a>
+    <a class="nav-item" data-page="expenses">
+      <span class="nav-icon">📝</span>
+      <span>المصروفات اليومية</span>
+    </a>
+    <a class="nav-item" data-page="recurring">
+      <span class="nav-icon">🔁</span>
+      <span>المصروفات المتكررة</span>
+    </a>
+    <a class="nav-item" data-page="goals">
+      <span class="nav-icon">🎯</span>
+      <span>أهداف الادخار</span>
+    </a>
+
+    <div class="nav-group-title">التحليلات</div>
+    <a class="nav-item" data-page="analysis">
+      <span class="nav-icon">📊</span>
+      <span>التحليل المالي</span>
+    </a>
+    <a class="nav-item" data-page="charts">
+      <span class="nav-icon">📈</span>
+      <span>الرسوم البيانية</span>
+    </a>
+    <a class="nav-item" data-page="compare">
+      <span class="nav-icon">🔍</span>
+      <span>مقارنة السنوات</span>
+    </a>
+
+    <div class="nav-group-title">أدوات</div>
+    <a class="nav-item" data-page="copy">
+      <span class="nav-icon">📋</span>
+      <span>نسخ بيانات شهر</span>
+    </a>
+    <a class="nav-item" data-page="data">
+      <span class="nav-icon">💾</span>
+      <span>البيانات والنسخ</span>
+    </a>
+    <a class="nav-item" data-page="settings">
+      <span class="nav-icon">⚙️</span>
+      <span>الإعدادات</span>
+    </a>
+  </nav>
+
+  <div class="sidebar-footer">
+    <div class="version">الإصدار 2.0 PRO</div>
+  </div>
+</aside>
+
+<!-- ============ الغطاء المعتم ============ -->
+<div id="overlay" class="overlay"></div>
+
+<!-- ============ الهيدر ============ -->
+<header class="app-header">
+  <button id="hamburger" class="hamburger" aria-label="القائمة">
+    <span></span><span></span><span></span>
+  </button>
+
+  <div class="header-logo">
+    <div class="header-logo-icon">💰</div>
+    <div class="header-logo-text">
+      <div class="header-title">الميزانية الذكية</div>
+      <div class="header-subtitle">إدارة النفقات الاحترافية</div>
+    </div>
+  </div>
+
+  <div class="header-controls">
+    <select id="yearSelect" title="السنة"></select>
+    <select id="monthSelect" title="الشهر"></select>
+    <button id="darkModeToggle" class="icon-btn" title="الوضع المظلم">🌙</button>
+  </div>
+</header>
+
+<!-- ============ المحتوى ============ -->
+<main class="app-main">
+  <div id="alertsContainer"></div>
+
+  <!-- صفحة: لوحة التحكم -->
+  <section class="page active" id="page-dashboard">
+    <div class="page-header">
+      <h2>🏠 لوحة التحكم</h2>
+      <p class="page-desc">نظرة شاملة على وضعك المالي لهذا الشهر</p>
+    </div>
+
+    <div class="stats-grid">
+      <div class="stat-card">
+        <div class="stat-icon">💵</div>
+        <div class="stat-label">الدخل</div>
+        <div class="stat-value" id="statIncome">0</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon">💸</div>
+        <div class="stat-label">المصروفات</div>
+        <div class="stat-value" id="statExpenses">0</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon">📉</div>
+        <div class="stat-label">المتبقي</div>
+        <div class="stat-value" id="statBalance">0</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon">🏆</div>
+        <div class="stat-label">النتيجة</div>
+        <div class="stat-value" id="statScore">--/100</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>💡 رؤى ذكية</h3>
+      <div id="insightsBox" class="insights-box"></div>
+    </div>
+
+    <div class="card">
+      <h3>📊 أعلى الفئات إنفاقاً</h3>
+      <div id="dashboardCategories"></div>
+    </div>
+  </section>
+
+  <!-- صفحة: الدخل -->
+  <section class="page" id="page-income">
+    <div class="page-header">
+      <h2>💵 الدخل والمصادر</h2>
+      <p class="page-desc">سجّل دخلك الأساسي ومصادر الدخل الإضافية</p>
+    </div>
+
+    <div class="card">
+      <label>الدخل الأساسي</label>
+      <div class="form-row">
+        <input type="number" id="income" placeholder="0" step="0.01">
+        <span class="currency-symbol">ر.س</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>مصادر دخل إضافية</h3>
+      <div id="incomeSourcesList" class="compact-list"></div>
+      <div class="form-row">
+        <input type="text" id="newIncomeSourceName" placeholder="اسم المصدر (مثل: عمل حر)">
+        <input type="number" id="newIncomeSourceAmount" placeholder="المبلغ" step="0.01">
+        <button id="addIncomeSourceBtn">➕ إضافة</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- صفحة: الفئات -->
+  <section class="page" id="page-categories">
+    <div class="page-header">
+      <h2>📂 الفئات والميزانيات</h2>
+      <p class="page-desc">أنشئ فئات مصروفات وحدد الميزانيات والحدود</p>
+    </div>
+
+    <div class="card">
+      <h3>الفئات الحالية</h3>
+      <div id="categoriesList"></div>
+    </div>
+
+    <div class="card">
+      <h3>➕ إضافة فئة جديدة</h3>
+      <div class="form-row">
+        <input type="text" id="newCategoryName" placeholder="اسم الفئة">
+        <input type="color" id="newCategoryColor" value="#3b82f6" title="لون الفئة">
+        <input type="number" id="newCategoryMonthly" placeholder="الميزانية الشهرية" step="0.01">
+        <input type="number" id="newCategoryDaily" placeholder="الحد اليومي" step="0.01">
+        <input type="number" id="newCategoryWeekly" placeholder="الحد الأسبوعي" step="0.01">
+        <button id="addCategoryBtn">➕ إضافة</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- صفحة: المصروفات -->
+  <section class="page" id="page-expenses">
+    <div class="page-header">
+      <h2>📝 المصروفات اليومية</h2>
+      <p class="page-desc">سجّل مصروفاتك اليومية وصنّفها</p>
+    </div>
+
+    <div class="card">
+      <h3>➕ إضافة مصروف</h3>
+      <div class="form-row">
+        <select id="expenseCategorySelect"></select>
+        <input type="date" id="expenseDate">
+        <input type="number" id="expenseAmount" placeholder="المبلغ" step="0.01">
+        <input type="text" id="expenseNote" placeholder="ملاحظة">
+        <button id="addExpenseBtn">➕ إضافة</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header-inline">
+        <h3>📋 قائمة المصروفات</h3>
+      </div>
+      <div class="filter-row">
+        <input type="text" id="searchExpenses" placeholder="🔍 بحث...">
+        <select id="filterCategory"><option value="">كل الفئات</option></select>
+        <input type="date" id="filterFrom" title="من تاريخ">
+        <input type="date" id="filterTo" title="إلى تاريخ">
+        <button id="clearFiltersBtn" class="ghost">✖ مسح</button>
+      </div>
+      <div id="dailyExpensesList"></div>
+      <div id="expensesSummary" class="summary-bar"></div>
+    </div>
+  </section>
+
+  <!-- صفحة: المتكررة -->
+  <section class="page" id="page-recurring">
+    <div class="page-header">
+      <h2>🔁 المصروفات المتكررة</h2>
+      <p class="page-desc">مصروفات تُضاف تلقائياً كل شهر (إيجار، اشتراكات)</p>
+    </div>
+
+    <div class="card">
+      <h3>القائمة الحالية</h3>
+      <div id="recurringList"></div>
+    </div>
+
+    <div class="card">
+      <h3>➕ إضافة متكرر جديد</h3>
+      <div class="form-row">
+        <select id="recurringCategory"></select>
+        <input type="number" id="recurringAmount" placeholder="المبلغ" step="0.01">
+        <input type="number" id="recurringDay" placeholder="يوم الشهر (1-28)" min="1" max="28">
+        <input type="text" id="recurringNote" placeholder="وصف (مثل: إيجار)">
+        <button id="addRecurringBtn">➕ إضافة</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- صفحة: الأهداف -->
+  <section class="page" id="page-goals">
+    <div class="page-header">
+      <h2>🎯 أهداف الادخار</h2>
+      <p class="page-desc">حدد أهدافك وتابع تقدمك نحو تحقيقها</p>
+    </div>
+
+    <div class="card">
+      <h3>أهدافك الحالية</h3>
+      <div id="goalsList"></div>
+    </div>
+
+    <div class="card">
+      <h3>➕ إضافة هدف جديد</h3>
+      <div class="form-row">
+        <input type="text" id="newGoalName" placeholder="اسم الهدف">
+        <input type="number" id="newGoalTarget" placeholder="المبلغ المستهدف" step="0.01">
+        <input type="date" id="newGoalDeadline" title="الموعد النهائي">
+        <button id="addGoalBtn">➕ إضافة</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- صفحة: التحليل -->
+  <section class="page" id="page-analysis">
+    <div class="page-header">
+      <h2>📊 التحليل المالي</h2>
+      <p class="page-desc">تفاصيل دقيقة عن وضعك المالي والتوقعات</p>
+    </div>
+
+    <div class="card">
+      <h3>الملخص المالي</h3>
+      <div id="analysisDetails"></div>
+    </div>
+
+    <div class="card">
+      <h3>💡 الرؤى الذكية</h3>
+      <div id="analysisInsights" class="insights-box"></div>
+    </div>
+
+    <div class="card">
+      <h3>🔮 التوقعات</h3>
+      <div id="forecastBox"></div>
+    </div>
+  </section>
+
+  <!-- صفحة: الرسوم البيانية -->
+  <section class="page" id="page-charts">
+    <div class="page-header">
+      <h2>📈 الرسوم البيانية</h2>
+      <p class="page-desc">عرض بصري لبياناتك المالية</p>
+    </div>
+
+    <div class="card">
+      <h3>مقارنة المصروفات والميزانيات</h3>
+      <canvas id="barChart" height="180"></canvas>
+    </div>
+
+    <div class="card">
+      <h3>تطور المصروفات الشهرية</h3>
+      <canvas id="lineChart" height="180"></canvas>
+    </div>
+
+    <div class="card">
+      <h3>توزيع الفئات</h3>
+      <canvas id="pieChart" height="180"></canvas>
+    </div>
+  </section>
+
+  <!-- صفحة: المقارنة -->
+  <section class="page" id="page-compare">
+    <div class="page-header">
+      <h2>🔍 مقارنة السنوات</h2>
+      <p class="page-desc">قارن مصروفاتك بين سنتين مختلفتين</p>
+    </div>
+
+    <div class="card">
+      <div class="form-row">
+        <select id="compareYear1"></select>
+        <select id="compareYear2"></select>
+        <button id="compareYearsBtn">عرض المقارنة</button>
+      </div>
+      <canvas id="compareChart" height="200"></canvas>
+    </div>
+  </section>
+
+  <!-- صفحة: النسخ -->
+  <section class="page" id="page-copy">
+    <div class="page-header">
+      <h2>📋 نسخ بيانات شهر</h2>
+      <p class="page-desc">انسخ بيانات شهر إلى شهر آخر مع خيارات متعددة</p>
+    </div>
+
+    <div class="card">
+      <div class="form-row">
+        <div class="copy-col">
+          <label>من</label>
+          <select id="copyFromYear"></select>
+          <select id="copyFromMonth"></select>
+        </div>
+        <div class="copy-arrow">⬅️</div>
+        <div class="copy-col">
+          <label>إلى</label>
+          <select id="copyToYear"></select>
+          <select id="copyToMonth"></select>
+        </div>
+      </div>
+      <button id="copyMonthBtn" style="margin-top:1rem;">📋 بدء النسخ</button>
+    </div>
+  </section>
+
+  <!-- صفحة: البيانات -->
+  <section class="page" id="page-data">
+    <div class="page-header">
+      <h2>💾 البيانات والنسخ الاحتياطي</h2>
+      <p class="page-desc">تصدير، استيراد، وترحيل بياناتك</p>
+    </div>
+
+    <div class="card">
+      <h3>📤 تصدير البيانات</h3>
+      <div class="form-row">
+        <button id="exportExcelBtn">📎 Excel</button>
+        <button id="exportCSVBtn">📄 CSV</button>
+        <button id="exportPDFBtn">📑 PDF</button>
+        <button id="exportJSONBtn">💾 نسخة احتياطية JSON</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>📥 استيراد البيانات</h3>
+      <div class="form-row">
+        <input type="file" id="importJSONInput" hidden accept=".json">
+        <button id="importJSONBtn">📂 استيراد من JSON</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>🔄 الترحيل</h3>
+      <p class="muted">ترحيل البيانات من الإصدار القديم (ultra_)</p>
+      <button id="migrateBtn">🔄 ترحيل من الإصدار القديم</button>
+    </div>
+  </section>
+
+  <!-- صفحة: الإعدادات -->
+  <section class="page" id="page-settings">
+    <div class="page-header">
+      <h2>⚙️ الإعدادات</h2>
+      <p class="page-desc">تخصيص تجربة التطبيق</p>
+    </div>
+
+    <div class="card">
+      <h3>العملة</h3>
+      <label>رمز العملة</label>
+      <input type="text" id="settingsCurrency" placeholder="ر.س" maxlength="5">
+
+      <h3 style="margin-top:1rem;">المظهر</h3>
+      <label class="switch-row">
+        <span>الوضع المظلم</span>
+        <input type="checkbox" id="settingsDarkMode">
+      </label>
+
+      <h3 style="margin-top:1rem;">النسخ الاحتياطي</h3>
+      <label class="switch-row">
+        <span>نسخ احتياطي تلقائي</span>
+        <input type="checkbox" id="settingsAutoBackup">
+      </label>
+
+      <button id="saveSettingsBtn" style="margin-top:1.5rem;">💾 حفظ الإعدادات</button>
+    </div>
+  </section>
+</main>
+
+<!-- حاوية التنبيهات المنبثقة -->
+<div id="toastContainer" class="toast-container"></div>
+
+<!-- نافذة عامة -->
+<div id="genericModal" class="modal" style="display:none;">
+  <div class="modal-content" id="genericModalContent"></div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
