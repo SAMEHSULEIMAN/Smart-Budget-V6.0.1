@@ -69,7 +69,7 @@
     <div class="nav-group-title">أدوات</div>
     <a class="nav-item" data-page="copy">
       <span class="nav-icon">📋</span>
-      <span>نسخ بيانات شهر</span>
+      <span>نسخ بيانات دورة</span>
     </a>
     <a class="nav-item" data-page="data">
       <span class="nav-icon">💾</span>
@@ -82,7 +82,7 @@
   </nav>
 
   <div class="sidebar-footer">
-    <div class="version">الإصدار 2.0 PRO</div>
+    <div class="version">الإصدار 3.0 PRO</div>
   </div>
 </aside>
 
@@ -105,7 +105,7 @@
 
   <div class="header-controls">
     <select id="yearSelect" title="السنة"></select>
-    <select id="monthSelect" title="الشهر"></select>
+    <select id="monthSelect" title="دورة الشهر"></select>
     <button id="darkModeToggle" class="icon-btn" title="الوضع المظلم">🌙</button>
   </div>
 </header>
@@ -118,7 +118,38 @@
   <section class="page active" id="page-dashboard">
     <div class="page-header">
       <h2>🏠 لوحة التحكم</h2>
-      <p class="page-desc">نظرة شاملة على وضعك المالي لهذا الشهر</p>
+      <p class="page-desc">نظرة شاملة على وضعك المالي لهذه الدورة</p>
+    </div>
+
+    <!-- بانر يوم القبض -->
+    <div id="paydayBanner" class="payday-banner" style="display:none;"></div>
+
+    <!-- بطاقة دورة الراتب -->
+    <div class="cycle-card" id="cycleCard">
+      <div class="cycle-info">
+        <div class="cycle-icon">📅</div>
+        <div>
+          <div class="cycle-label">دورة الراتب الحالية</div>
+          <div class="cycle-range" id="cycleRange">—</div>
+        </div>
+      </div>
+      <div class="cycle-stats">
+        <div class="cycle-stat">
+          <div class="cycle-stat-value" id="cycleDaysElapsed">0</div>
+          <div class="cycle-stat-label">يوم مضى</div>
+        </div>
+        <div class="cycle-stat">
+          <div class="cycle-stat-value" id="cycleDaysLeft">0</div>
+          <div class="cycle-stat-label">يوم متبقٍ</div>
+        </div>
+        <div class="cycle-stat">
+          <div class="cycle-stat-value" id="cycleProgressPct">0%</div>
+          <div class="cycle-stat-label">التقدم</div>
+        </div>
+      </div>
+      <div class="cycle-progress">
+        <div class="cycle-progress-bar" id="cycleProgressBar"></div>
+      </div>
     </div>
 
     <div class="stats-grid">
@@ -163,7 +194,7 @@
     </div>
 
     <div class="card">
-      <label>الدخل الأساسي</label>
+      <label>الدخل الأساسي (الراتب)</label>
       <div class="form-row">
         <input type="number" id="income" placeholder="0" step="0.01">
         <span class="currency-symbol">ر.س</span>
@@ -244,7 +275,7 @@
   <section class="page" id="page-recurring">
     <div class="page-header">
       <h2>🔁 المصروفات المتكررة</h2>
-      <p class="page-desc">مصروفات تُضاف تلقائياً كل شهر (إيجار، اشتراكات)</p>
+      <p class="page-desc">مصروفات تُضاف تلقائياً كل دورة (إيجار، اشتراكات)</p>
     </div>
 
     <div class="card">
@@ -257,7 +288,7 @@
       <div class="form-row">
         <select id="recurringCategory"></select>
         <input type="number" id="recurringAmount" placeholder="المبلغ" step="0.01">
-        <input type="number" id="recurringDay" placeholder="يوم الشهر (1-28)" min="1" max="28">
+        <input type="number" id="recurringDay" placeholder="يوم من الشهر (1-28)" min="1" max="28">
         <input type="text" id="recurringNote" placeholder="وصف (مثل: إيجار)">
         <button id="addRecurringBtn">➕ إضافة</button>
       </div>
@@ -353,8 +384,8 @@
   <!-- صفحة: النسخ -->
   <section class="page" id="page-copy">
     <div class="page-header">
-      <h2>📋 نسخ بيانات شهر</h2>
-      <p class="page-desc">انسخ بيانات شهر إلى شهر آخر مع خيارات متعددة</p>
+      <h2>📋 نسخ بيانات دورة</h2>
+      <p class="page-desc">انسخ بيانات دورة إلى دورة أخرى مع خيارات متعددة</p>
     </div>
 
     <div class="card">
@@ -415,23 +446,48 @@
     </div>
 
     <div class="card">
-      <h3>العملة</h3>
+      <h3>💰 العملة</h3>
       <label>رمز العملة</label>
       <input type="text" id="settingsCurrency" placeholder="ر.س" maxlength="5">
 
-      <h3 style="margin-top:1rem;">المظهر</h3>
+      <h3 style="margin-top:1.2rem;">📅 يوم القبض</h3>
+      <label>يوم استلام الراتب في الشهر (1 - 28)</label>
+      <input type="number" id="settingsPayday" min="1" max="28" placeholder="1">
+      <small class="muted" style="display:block;margin-top:.3rem;font-size:.78rem;">
+        سيتم حساب الدورة من يوم القبض إلى يوم القبض التالي. مثلاً: يوم 25 يعني أن "دورة 9" تمتد من 25 سبتمبر إلى 24 أكتوبر.
+      </small>
+
+      <h3 style="margin-top:1.2rem;">🔔 الإشعارات والراتب التلقائي</h3>
+
+      <label class="switch-row">
+        <span>🔔 إشعار يوم القبض</span>
+        <input type="checkbox" id="settingsNotify">
+      </label>
+      <small class="muted" style="display:block;margin:-.3rem 0 .8rem;font-size:.78rem;">
+        إظهار تنبيه في التطبيق + إشعار المتصفح في يوم القبض.
+      </small>
+
+      <label class="switch-row">
+        <span>💰 إضافة الراتب تلقائياً في يوم القبض</span>
+        <input type="checkbox" id="settingsAutoAddIncome">
+      </label>
+      <small class="muted" style="display:block;margin:-.3rem 0 0;font-size:.78rem;">
+        يسجّل الراتب (المُدخل في خانة الدخل) تلقائياً عند حلول يوم القبض.
+      </small>
+
+      <h3 style="margin-top:1.2rem;">🎨 المظهر</h3>
       <label class="switch-row">
         <span>الوضع المظلم</span>
         <input type="checkbox" id="settingsDarkMode">
       </label>
 
-      <h3 style="margin-top:1rem;">النسخ الاحتياطي</h3>
+      <h3 style="margin-top:1.2rem;">💾 النسخ الاحتياطي</h3>
       <label class="switch-row">
         <span>نسخ احتياطي تلقائي</span>
         <input type="checkbox" id="settingsAutoBackup">
       </label>
 
-      <button id="saveSettingsBtn" style="margin-top:1.5rem;">💾 حفظ الإعدادات</button>
+      <button id="saveSettingsBtn" style="margin-top:1.5rem;width:100%;">💾 حفظ الإعدادات</button>
     </div>
   </section>
 </main>
