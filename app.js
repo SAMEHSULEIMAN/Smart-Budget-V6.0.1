@@ -1,16 +1,22 @@
 /* ============================================================
-   Smart Budget PRO - مع قائمة جانبية منزلقة
+   Smart Budget PRO 3.0
+   الميزانية الذكية - مع دورة الراتب والإشعارات والراتب التلقائي
    ============================================================ */
 'use strict';
 
-const APP_VERSION = 2;
+const APP_VERSION = 3;
 const STORAGE_PREFIX = 'budget_';
 const SETTINGS_KEY = 'budgetSettings';
+const PAYDAY_APPLIED_KEY = 'budget_payday_applied';
+const PAYDAY_DISMISSED_KEY = 'paydayBannerDismissed';
 const OLD_PREFIX = 'ultra_';
 
 const state = {
   year: new Date().getFullYear(),
   month: new Date().getMonth() + 1,
+  payday: 1,
+  notify: false,
+  autoAddIncome: false,
   income: 0,
   incomeSources: [],
   categories: {},
@@ -25,6 +31,7 @@ const state = {
 /* ==================== TOAST ==================== */
 function toast(message, type = 'info', duration = 3000) {
   const container = document.getElementById('toastContainer');
+  if (!container) return;
   const icons = { success: '✅', error: '❌', warning: '⚠️', info: 'ℹ️' };
   const el = document.createElement('div');
   el.className = `toast ${type}`;
@@ -47,8 +54,10 @@ function showModal(html, onMount) {
   if (typeof onMount === 'function') onMount(content);
 }
 function closeModal() {
-  document.getElementById('genericModal').style.display = 'none';
-  document.getElementById('genericModalContent').innerHTML = '';
+  const m = document.getElementById('genericModal');
+  if (m) m.style.display = 'none';
+  const c = document.getElementById('genericModalContent');
+  if (c) c.innerHTML = '';
 }
 function confirmModal(message, onConfirm) {
   showModal(`
@@ -77,16 +86,218 @@ function formatMoney(amount) {
 }
 function formatDate(iso) {
   if (!iso) return '';
-  return new Date(iso).toLocaleDateString('ar-EG', { year: 'numeric', month: 'short', day: 'numeric' });
+  try {
+    return new Date(iso).toLocaleDateString('ar-EG', { year: 'numeric', month: 'short', day: 'numeric' });
+  } catch { return iso; }
 }
 function todayISO() { return new Date().toISOString().slice(0, 10); }
+function toISO(date) { return date.toISOString().slice(0, 10); }
 function uid() { return state.nextId++; }
 function debounce(fn, delay = 250) {
   let t;
   return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), delay); };
 }
 
-/* ==================== SIDEBAR & NAVIGATION ==================== */
+/* ============================================================
+   دورة الراتب (بتقبض إمتى)
+   ============================================================ */
+function getCycleRange(year, month) {
+  const payday = Math.min(Math.max(state.payday || 1, 1), 28);
+  const start = new Date(year, month - 1, payday);
+  const nextYear = month === 12 ? year + 1 : year;
+  const nextMonth = month === 12 ? 1 : month + 1;
+  const nextStart = new Date(nextYear, nextMonth - 1, payday);
+  const end = new Date(nextStart.getTime() - 24 * 60 * 60 * 1000);
+  return {
+    start, end,
+    startISO: toISO(start),
+    endISO: toISO(end),
+    daysTotal: Math.round((end - start) / 86400000) + 1
+  };
+}
+
+function getCurrentCycle() {
+  const payday = Math.min(Math.max(state.payday || 1, 1), 28);
+  const today = new Date();
+  const todayDay = today.getDate();
+  let year = today.getFullYear();
+  let month = today.getMonth() + 1;
+  if (todayDay < payday) {
+    month--;
+    if (month === 0) { month = 12; year--; }
+  }
+  return { year, month };
+}
+
+function isDateInCycle(dateISO, year, month) {
+  if (!dateISO) return false;
+  const range = getCycleRange(year, month);
+  return dateISO >= range.startISO && dateISO <= range.endISO;
+}
+
+function recurringDateInCycle(cycleYear, cycleMonth, dayOfMonth) {
+  const payday = Math.min(Math.max(state.payday || 1, 1), 28);
+  let ty = cycleYear, tm = cycleMonth;
+  if (dayOfMonth < payday) {
+    tm++;
+    if (tm > 12) { tm = 1; ty++; }
+  }
+  return `${ty}-${String(tm).padStart(2,'0')}-${String(dayOfMonth).padStart(2,'0')}`;
+}
+
+function renderCycleInfo() {
+  const range = getCycleRange(state.year, state.month);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  const rangeEl = document.getElementById('cycleRange');
+  if (rangeEl) {
+    const fmt = (d) => d.toLocaleDateString('ar-EG', { day: 'numeric', month: 'long' });
+    rangeEl.textContent = `${fmt(range.start)}  →  ${fmt(range.end)}`;
+  }
+
+  const elapsed = Math.max(0, Math.min(range.daysTotal, Math.round((today - range.start) / 86400000) + 1));
+  const left = Math.max(0, range.daysTotal - elapsed);
+  const pct = Math.min(100, (elapsed / range.daysTotal) * 100);
+
+  const eEl = document.getElementById('cycleDaysElapsed');
+  const lEl = document.getElementById('cycleDaysLeft');
+  const pEl = document.getElementById('cycleProgressPct');
+  const bEl = document.getElementById('cycleProgressBar');
+  if (eEl) eEl.textContent = elapsed;
+  if (lEl) lEl.textContent = left;
+  if (pEl) pEl.textContent = pct.toFixed(0) + '%';
+  if (bEl) bEl.style.width = pct + '%';
+}
+
+/* ============================================================
+   إشعار يوم القبض + الراتب التلقائي
+   ============================================================ */
+function checkPayday() {
+  const today = new Date();
+  const todayDay = today.getDate();
+  const payday = Math.min(Math.max(state.payday || 1, 1), 28);
+  const diff = payday - todayDay;
+  const isPaydayToday = todayDay === payday;
+
+  // 1) إضافة الراتب تلقائياً
+  if (state.autoAddIncome && (isPaydayToday || diff < 0)) {
+    const cycleKey = `${state.year}-${state.month}`;
+    let applied = {};
+    try { applied = JSON.parse(localStorage.getItem(PAYDAY_APPLIED_KEY) || '{}'); } catch { applied = {}; }
+
+    if (!applied[cycleKey]) {
+      const salary = parseFloat(document.getElementById('income').value) || 0;
+      const hasAuto = state.incomeSources.some(s => s.auto);
+
+      if (salary > 0 && !hasAuto) {
+        state.incomeSources.push({
+          id: uid(),
+          name: '💰 الراتب (تلقائي)',
+          amount: salary,
+          auto: true,
+          appliedDate: todayISO(),
+          cycleKey: cycleKey
+        });
+        applied[cycleKey] = todayISO();
+        localStorage.setItem(PAYDAY_APPLIED_KEY, JSON.stringify(applied));
+        saveMonth();
+        toast('✅ تم إضافة الراتب تلقائياً لهذه الدورة', 'success', 3500);
+      }
+    }
+  }
+
+  // 2) عرض البانر
+  renderPaydayBanner(isPaydayToday, diff);
+
+  // 3) إشعار المتصفح
+  if (isPaydayToday && state.notify && 'Notification' in window) {
+    if (Notification.permission === 'granted') {
+      try {
+        new Notification('💰 يوم القبض!', {
+          body: 'اليوم هو يوم استلام راتبك. لا تنسَ تسجيله.',
+          icon: 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y="75" font-size="80">💰</text></svg>',
+          tag: 'payday-' + todayISO()
+        });
+      } catch (e) { /* تجاهل */ }
+    }
+  }
+}
+
+function renderPaydayBanner(isPaydayToday, diff) {
+  const banner = document.getElementById('paydayBanner');
+  if (!banner) return;
+
+  const dismissed = localStorage.getItem(PAYDAY_DISMISSED_KEY);
+  const todayKey = todayISO();
+  if (dismissed === todayKey) { banner.style.display = 'none'; return; }
+
+  const cycleKey = `${state.year}-${state.month}`;
+  let applied = {};
+  try { applied = JSON.parse(localStorage.getItem(PAYDAY_APPLIED_KEY) || '{}'); } catch { applied = {}; }
+
+  if (isPaydayToday) {
+    banner.className = 'payday-banner';
+    banner.innerHTML = `
+      <div class="pb-icon">🎉</div>
+      <div class="pb-content">
+        <div class="pb-title">اليوم هو يوم القبض!</div>
+        <div class="pb-desc">
+          ${applied[cycleKey]
+            ? '✅ تم تسجيل راتبك تلقائياً لهذه الدورة.'
+            : 'لا تنسَ تسجيل راتبك لهذه الدورة.'}
+        </div>
+      </div>
+      <button class="pb-close" aria-label="إغلاق">✕</button>
+    `;
+  } else if (diff === 1) {
+    banner.className = 'payday-banner reminder-urgent';
+    banner.innerHTML = `
+      <div class="pb-icon">⏰</div>
+      <div class="pb-content">
+        <div class="pb-title">غداً يوم القبض!</div>
+        <div class="pb-desc">باقي يوم واحد فقط. استعد للدورة الجديدة.</div>
+      </div>
+      <button class="pb-close" aria-label="إغلاق">✕</button>
+    `;
+  } else if (diff > 1 && diff <= 3) {
+    banner.className = 'payday-banner reminder';
+    banner.innerHTML = `
+      <div class="pb-icon">📅</div>
+      <div class="pb-content">
+        <div class="pb-title">باقي ${diff} أيام على القبض</div>
+        <div class="pb-desc">استعد مالياً للدورة الجديدة.</div>
+      </div>
+      <button class="pb-close" aria-label="إغلاق">✕</button>
+    `;
+  } else {
+    banner.style.display = 'none';
+    return;
+  }
+
+  banner.style.display = 'flex';
+  banner.querySelector('.pb-close')?.addEventListener('click', () => {
+    banner.style.display = 'none';
+    localStorage.setItem(PAYDAY_DISMISSED_KEY, todayKey);
+  });
+}
+
+function requestNotificationPermission() {
+  if (!('Notification' in window)) {
+    toast('المتصفح لا يدعم الإشعارات', 'warning');
+    return;
+  }
+  if (Notification.permission === 'granted') return;
+  if (Notification.permission === 'denied') {
+    toast('تم رفض إذن الإشعارات سابقاً. فعّله من إعدادات المتصفح.', 'warning', 4000);
+    return;
+  }
+  Notification.requestPermission().then(p => {
+    if (p === 'granted') toast('تم تفعيل إشعارات المتصفح ✅', 'success');
+  });
+}
+
+/* ==================== SIDEBAR ==================== */
 function openSidebar() {
   document.getElementById('sidebar').classList.add('open');
   document.getElementById('overlay').classList.add('show');
@@ -107,7 +318,6 @@ function navigateTo(pageName) {
   });
   closeSidebar();
   window.scrollTo({ top: 0, behavior: 'smooth' });
-  // إعادة رسم الرسوم عند فتح صفحاتها
   if (pageName === 'charts') {
     setTimeout(() => { drawBarChart(); drawLineChart(); drawPieChart(); }, 80);
   }
@@ -124,7 +334,7 @@ function loadMonth(year, month) {
   const raw = localStorage.getItem(storageKey(year, month));
   if (!raw) return emptyMonth();
   try { return migrateMonthSchema(JSON.parse(raw)); }
-  catch (e) { toast('تعذر قراءة بيانات الشهر', 'error'); return emptyMonth(); }
+  catch (e) { toast('تعذر قراءة بيانات الدورة', 'error'); return emptyMonth(); }
 }
 function migrateMonthSchema(d) {
   d.version = d.version || 1;
@@ -169,18 +379,29 @@ function loadCurrentMonth() {
   document.getElementById('income').value = state.income || '';
   applyRecurringForCurrentMonth();
 }
+
 function applyRecurringForCurrentMonth() {
+  const range = getCycleRange(state.year, state.month);
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  if (range.start > today) return;
+
   const key = `${state.year}-${state.month}`;
   let applied = 0;
+
   for (const rec of state.recurring) {
     if (rec.lastApplied === key) continue;
-    const exists = state.expenses.some(e => e.recurringId === rec.id && (e.date || '').startsWith(key));
+    const targetDate = recurringDateInCycle(state.year, state.month, rec.day);
+    const exists = state.expenses.some(e => e.recurringId === rec.id && e.date === targetDate);
     if (exists) { rec.lastApplied = key; continue; }
-    const day = Math.min(rec.day || 1, 28);
-    const iso = `${state.year}-${String(state.month).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+    if (targetDate > toISO(today)) continue;
+
     state.expenses.push({
-      id: uid(), category: rec.category, date: iso,
-      amount: rec.amount, note: rec.note || 'مصروف متكرر', recurringId: rec.id
+      id: uid(),
+      category: rec.category,
+      date: targetDate,
+      amount: rec.amount,
+      note: rec.note || 'مصروف متكرر',
+      recurringId: rec.id
     });
     if (state.categories[rec.category]) state.categories[rec.category].amount += rec.amount;
     rec.lastApplied = key;
@@ -191,9 +412,14 @@ function applyRecurringForCurrentMonth() {
 
 /* ==================== CALCULATIONS ==================== */
 function calcTotalIncome() {
-  const base = parseFloat(document.getElementById('income').value) || 0;
-  const extra = state.incomeSources.reduce((s, x) => s + (x.amount || 0), 0);
-  return base + extra;
+  const baseIncome = parseFloat(document.getElementById('income').value) || 0;
+  const autoSalary = state.incomeSources
+    .filter(s => s.auto)
+    .reduce((sum, x) => sum + (x.amount || 0), 0);
+  const extras = state.incomeSources
+    .filter(s => !s.auto)
+    .reduce((sum, x) => sum + (x.amount || 0), 0);
+  return (autoSalary > 0 ? autoSalary : baseIncome) + extras;
 }
 function calcTotalExpenses() {
   return Object.values(state.categories).reduce((s, c) => s + (c.amount || 0), 0);
@@ -215,13 +441,13 @@ function calcWeeklySum() {
   return out;
 }
 function calcForecast() {
-  const today = new Date();
-  const day = today.getDate();
-  const inMonth = new Date(state.year, state.month, 0).getDate();
+  const range = getCycleRange(state.year, state.month);
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const daysElapsed = Math.max(1, Math.min(range.daysTotal, Math.round((today - range.start) / 86400000) + 1));
   const total = calcTotalExpenses();
-  if (day < 3) return { projected: total, avg: 0 };
-  const avg = total / day;
-  return { projected: avg * inMonth, avg };
+  if (daysElapsed < 3) return { projected: total, avg: 0, daysInCycle: range.daysTotal, daysElapsed };
+  const avg = total / daysElapsed;
+  return { projected: avg * range.daysTotal, avg, daysInCycle: range.daysTotal, daysElapsed };
 }
 
 /* ==================== RENDER: CATEGORIES ==================== */
@@ -362,6 +588,7 @@ function openExpenseModal(id) {
   const opts = Object.keys(state.categories).map(n =>
     `<option value="${escapeHtml(n)}" ${isEdit && exp.category === n ? 'selected' : ''}>${escapeHtml(n)}</option>`
   ).join('');
+  if (!opts) return toast('أضف فئة أولاً', 'warning');
   showModal(`
     <button class="modal-close">&times;</button>
     <h3>${isEdit ? '✏️ تعديل مصروف' : '➕ إضافة مصروف'}</h3>
@@ -412,11 +639,25 @@ function deleteExpense(id) {
 function renderIncomeSources() {
   const c = document.getElementById('incomeSourcesList');
   c.innerHTML = '';
+
+  if (!state.incomeSources.length) {
+    c.innerHTML = `<div class="muted" style="padding:.4rem;">لا توجد مصادر دخل إضافية.</div>`;
+    return;
+  }
+
   state.incomeSources.forEach(s => {
     const div = document.createElement('div');
-    div.className = 'compact-item';
-    div.innerHTML = `<span>💵 ${escapeHtml(s.name)}</span><span class="good">${formatMoney(s.amount)}</span>`;
-    const db = document.createElement('button'); db.textContent = '🗑️'; db.classList.add('danger');
+    div.className = 'compact-item' + (s.auto ? ' auto-source' : '');
+    div.innerHTML = `
+      <span>${s.auto ? '💰' : '💵'} ${escapeHtml(s.name)}
+        ${s.auto ? '<span class="salary-badge">تلقائي</span>' : ''}
+      </span>
+      <span class="good">${formatMoney(s.amount)}</span>
+      ${s.auto ? `<span class="muted" style="font-size:.72rem;">${formatDate(s.appliedDate)}</span>` : ''}
+    `;
+    const db = document.createElement('button');
+    db.textContent = '🗑️';
+    db.classList.add('danger');
     db.style.marginInlineStart = 'auto';
     db.addEventListener('click', () => {
       state.incomeSources = state.incomeSources.filter(x => x.id !== s.id);
@@ -436,11 +677,12 @@ function renderRecurring() {
   state.recurring.forEach(rec => {
     const div = document.createElement('div');
     div.className = 'recurring-item';
+    const actualDate = recurringDateInCycle(state.year, state.month, rec.day);
     div.innerHTML = `
       <span>🔁 <b>${escapeHtml(rec.note || rec.category)}</b></span>
       <span class="muted">${escapeHtml(rec.category)}</span>
       <span class="bad">${formatMoney(rec.amount)}</span>
-      <span class="muted">يوم ${rec.day}</span>
+      <span class="muted">يوم ${rec.day} → ${formatDate(actualDate)}</span>
     `;
     const db = document.createElement('button'); db.textContent = '🗑️'; db.classList.add('danger');
     db.style.marginInlineStart = 'auto';
@@ -546,18 +788,18 @@ function analyze() {
   const ab = document.getElementById('analysisInsights');
   if (ab) ab.innerHTML = ih;
 
-  // Forecast box
   const fb = document.getElementById('forecastBox');
   if (fb) {
     const f = calcForecast();
     fb.innerHTML = `
       <div>📊 المتوسط اليومي: <b>${formatMoney(f.avg)}</b></div>
-      <div>🔮 التوقع لنهاية الشهر: <b>${formatMoney(f.projected)}</b></div>
-      <div class="muted" style="margin-top:.5rem;">بناءً على مصروفات ${new Date().getDate()} يوم مضت</div>
+      <div>🔮 التوقع لنهاية الدورة: <b>${formatMoney(f.projected)}</b></div>
+      <div class="muted" style="margin-top:.5rem;">
+        بناءً على ${f.daysElapsed} يوم مضت من أصل ${f.daysInCycle} يوم في دورة الراتب
+      </div>
     `;
   }
 
-  // Dashboard top categories
   const db = document.getElementById('dashboardCategories');
   if (db) {
     const sorted = Object.entries(state.categories).sort((a,b) => b[1].amount - a[1].amount).slice(0, 5);
@@ -580,7 +822,9 @@ function analyze() {
   }
 
   displayAlerts();
-  // Only redraw charts if their page is visible
+  renderCycleInfo();
+  checkPayday();
+
   if (document.getElementById('page-charts').classList.contains('active')) {
     drawBarChart(); drawLineChart(); drawPieChart();
   }
@@ -594,11 +838,18 @@ function buildInsights() {
     out.push(`💥 أكبر مصروف: ${formatMoney(big.amount)} في "${escapeHtml(big.category)}"`);
   }
   const f = calcForecast();
-  if (f.avg > 0) out.push(`🔮 توقع نهاية الشهر: <b>${formatMoney(f.projected)}</b>`);
-  // Compare to previous month
-  const pm = state.month === 1 ? 12 : state.month - 1;
-  const py = state.month === 1 ? state.year - 1 : state.year;
-  const prev = localStorage.getItem(storageKey(py, pm));
+  if (f.avg > 0) out.push(`🔮 توقع نهاية الدورة: <b>${formatMoney(f.projected)}</b>`);
+
+  const range = getCycleRange(state.year, state.month);
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const daysLeft = Math.max(0, Math.round((range.end - today) / 86400000));
+  if (daysLeft > 0 && daysLeft <= 5 && f.avg > 0) {
+    out.push(`⏰ باقي ${daysLeft} يوم على القبض، متوسط الصرف ${formatMoney(f.avg)}/يوم`);
+  }
+
+  const prevMonth = state.month === 1 ? 12 : state.month - 1;
+  const prevYear = state.month === 1 ? state.year - 1 : state.year;
+  const prev = localStorage.getItem(storageKey(prevYear, prevMonth));
   if (prev) {
     try {
       const pd = JSON.parse(prev);
@@ -606,7 +857,7 @@ function buildInsights() {
       const cur = calcTotalExpenses();
       if (pt > 0) {
         const diff = ((cur - pt) / pt) * 100;
-        if (Math.abs(diff) > 5) out.push(`${diff > 0 ? '📈 زيادة' : '📉 انخفاض'} ${Math.abs(diff).toFixed(1)}% مقارنة بالشهر السابق`);
+        if (Math.abs(diff) > 5) out.push(`${diff > 0 ? '📈 زيادة' : '📉 انخفاض'} ${Math.abs(diff).toFixed(1)}% مقارنة بالدورة السابقة`);
       }
     } catch {}
   }
@@ -677,7 +928,7 @@ function drawLineChart() {
     data: {
       labels: ['يناير','فبراير','مارس','أبريل','مايو','يونيو','يوليو','أغسطس','سبتمبر','أكتوبر','نوفمبر','ديسمبر'],
       datasets: [{
-        label: `مصروفات ${state.year}`,
+        label: `دورات ${state.year}`,
         data: totals,
         borderColor: '#22c55e',
         backgroundColor: 'rgba(34,197,94,0.15)',
@@ -715,7 +966,7 @@ function compareYears() {
   state.charts.compare = new Chart(el.getContext('2d'), {
     type: 'bar',
     data: {
-      labels: months.map(m => `شهر ${m}`),
+      labels: months.map(m => `دورة ${m}`),
       datasets: [
         { label: `سنة ${y1}`, data: get(y1), backgroundColor: '#3b82f6', borderRadius: 6 },
         { label: `سنة ${y2}`, data: get(y2), backgroundColor: '#22c55e', borderRadius: 6 }
@@ -761,7 +1012,7 @@ function exportExcel() {
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), 'الفئات');
   const exp = state.expenses.map(e => ({ 'التاريخ': e.date, 'الفئة': e.category, 'المبلغ': e.amount, 'ملاحظة': e.note || '' }));
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(exp), 'المصروفات');
-  XLSX.writeFile(wb, `budget_${state.year}_${state.month}.xlsx`);
+  XLSX.writeFile(wb, `budget_cycle_${state.year}_${state.month}.xlsx`);
   toast('تم التصدير', 'success');
 }
 function exportCSV() {
@@ -776,21 +1027,24 @@ function exportCSV() {
 function exportPDF() {
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF();
+  const range = getCycleRange(state.year, state.month);
   doc.setFontSize(16);
-  doc.text(`Smart Budget - ${state.year}/${state.month}`, 10, 15);
+  doc.text(`Smart Budget - Cycle ${state.year}/${state.month}`, 10, 15);
+  doc.setFontSize(10);
+  doc.text(`Period: ${range.startISO} to ${range.endISO}`, 10, 22);
   doc.setFontSize(11);
   const inc = calcTotalIncome(), exp = calcTotalExpenses();
-  doc.text(`Income: ${inc.toFixed(2)}`, 10, 28);
-  doc.text(`Expenses: ${exp.toFixed(2)}`, 10, 36);
-  doc.text(`Balance: ${(inc - exp).toFixed(2)}`, 10, 44);
+  doc.text(`Income: ${inc.toFixed(2)}`, 10, 32);
+  doc.text(`Expenses: ${exp.toFixed(2)}`, 10, 40);
+  doc.text(`Balance: ${(inc - exp).toFixed(2)}`, 10, 48);
   if (doc.autoTable) {
     doc.autoTable({
-      startY: 55,
+      startY: 58,
       head: [['Category', 'Spent', 'Budget']],
       body: Object.entries(state.categories).map(([c, d]) => [c, d.amount.toFixed(2), (d.monthlyLimit||0).toFixed(2)])
     });
   }
-  doc.save(`budget_${state.year}_${state.month}.pdf`);
+  doc.save(`budget_cycle_${state.year}_${state.month}.pdf`);
   toast('تم التصدير', 'success');
 }
 function exportJSON() {
@@ -814,7 +1068,7 @@ function importJSON(e) {
       for (const [k, v] of Object.entries(d)) {
         if (k.startsWith(STORAGE_PREFIX)) { localStorage.setItem(k, JSON.stringify(v)); n++; }
       }
-      toast(`تم استيراد ${n} شهر`, 'success');
+      toast(`تم استيراد ${n} دورة`, 'success');
       loadCurrentMonth(); renderAll();
     } catch { toast('ملف غير صالح', 'error'); }
   };
@@ -850,7 +1104,7 @@ function migrateFromOldVersion() {
       n++;
     } catch (e) { console.error(e); }
   }
-  if (n) { toast(`تم ترحيل ${n} شهر`, 'success'); loadCurrentMonth(); renderAll(); }
+  if (n) { toast(`تم ترحيل ${n} دورة`, 'success'); loadCurrentMonth(); renderAll(); }
 }
 
 /* ==================== COPY MONTH ==================== */
@@ -860,7 +1114,7 @@ function copyMonthData() {
   const ty = document.getElementById('copyToYear').value;
   const tm = document.getElementById('copyToMonth').value;
   const src = localStorage.getItem(storageKey(fy, fm));
-  if (!src) return toast('لا توجد بيانات في الشهر المصدر', 'error');
+  if (!src) return toast('لا توجد بيانات في الدورة المصدر', 'error');
   showModal(`
     <button class="modal-close">&times;</button>
     <h3>نسخ ${fy}/${fm} → ${ty}/${tm}</h3>
@@ -897,36 +1151,58 @@ function loadSettings() {
   document.getElementById('settingsCurrency').value = s.currency || 'ر.س';
   document.getElementById('settingsDarkMode').checked = !!s.darkMode;
   document.getElementById('settingsAutoBackup').checked = !!s.autoBackup;
+  document.getElementById('settingsPayday').value = s.payday || 1;
+  document.getElementById('settingsNotify').checked = !!s.notify;
+  document.getElementById('settingsAutoAddIncome').checked = !!s.autoAddIncome;
+  state.payday = s.payday || 1;
+  state.notify = !!s.notify;
+  state.autoAddIncome = !!s.autoAddIncome;
   if (s.darkMode) document.body.classList.add('dark');
   document.querySelectorAll('.currency-symbol').forEach(el => el.textContent = s.currency || 'ر.س');
 }
 function saveSettings() {
+  const payday = Math.min(Math.max(parseInt(document.getElementById('settingsPayday').value) || 1, 1), 28);
   const s = {
     currency: document.getElementById('settingsCurrency').value || 'ر.س',
     darkMode: document.getElementById('settingsDarkMode').checked,
-    autoBackup: document.getElementById('settingsAutoBackup').checked
+    autoBackup: document.getElementById('settingsAutoBackup').checked,
+    payday: payday,
+    notify: document.getElementById('settingsNotify').checked,
+    autoAddIncome: document.getElementById('settingsAutoAddIncome').checked
   };
   localStorage.setItem(SETTINGS_KEY, JSON.stringify(s));
   document.body.classList.toggle('dark', s.darkMode);
   document.querySelectorAll('.currency-symbol').forEach(el => el.textContent = s.currency);
+  state.payday = payday;
+  state.notify = s.notify;
+  state.autoAddIncome = s.autoAddIncome;
 }
 
 /* ==================== SELECTORS INIT ==================== */
 function initSelectors() {
   const now = new Date();
-  const curY = now.getFullYear(), curM = now.getMonth() + 1;
+  const curY = now.getFullYear();
+
   const years = Array.from({ length: 11 }, (_, i) => curY - 5 + i);
   ['yearSelect','compareYear1','compareYear2','copyFromYear','copyToYear'].forEach(id => {
-    document.getElementById(id).innerHTML = years.map(y =>
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.innerHTML = years.map(y =>
       `<option value="${y}" ${y === curY ? 'selected' : ''}>سنة ${y}</option>`).join('');
   });
+
   const months = Array.from({ length: 12 }, (_, i) => i + 1);
   ['monthSelect','copyFromMonth','copyToMonth'].forEach(id => {
-    document.getElementById(id).innerHTML = months.map(m =>
-      `<option value="${m}" ${m === curM ? 'selected' : ''}>شهر ${m}</option>`).join('');
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.innerHTML = months.map(m => `<option value="${m}">دورة ${m}</option>`).join('');
   });
-  state.year = curY;
-  state.month = curM;
+
+  const cycle = getCurrentCycle();
+  state.year = cycle.year;
+  state.month = cycle.month;
+  document.getElementById('yearSelect').value = cycle.year;
+  document.getElementById('monthSelect').value = cycle.month;
 }
 
 /* ==================== EVENTS ==================== */
@@ -1046,7 +1322,20 @@ function bindEvents() {
 
   // Settings
   document.getElementById('saveSettingsBtn').addEventListener('click', () => {
-    saveSettings(); renderAll(); toast('تم الحفظ', 'success');
+    const wasNotify = state.notify;
+    saveSettings();
+
+    if (state.notify && !wasNotify) {
+      requestNotificationPermission();
+    }
+
+    const c = getCurrentCycle();
+    state.year = c.year; state.month = c.month;
+    document.getElementById('yearSelect').value = c.year;
+    document.getElementById('monthSelect').value = c.month;
+    loadCurrentMonth();
+    renderAll();
+    toast('تم الحفظ. تم تحديث دورة الراتب', 'success');
   });
   document.getElementById('darkModeToggle').addEventListener('click', () => {
     document.body.classList.toggle('dark');
